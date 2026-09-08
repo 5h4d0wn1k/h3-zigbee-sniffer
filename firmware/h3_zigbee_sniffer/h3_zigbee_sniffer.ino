@@ -76,24 +76,35 @@ void exportData();
 void showHelp();
 void processSerialCommand();
 
-// IEEE 802.15.4 receive callback
-void IRAM_ATTR ieee802154_rx_cb(uint8_t* data, uint8_t length, int8_t rssi, uint32_t timestamp) {
-    if (!capturing) return;
-    
+// IEEE 802.15.4 receive callback (weak symbol provided by the 802.15.4 driver;
+// the first byte of `frame` is the frame length, data follows it)
+extern "C" void IRAM_ATTR esp_ieee802154_receive_done(uint8_t *frame, esp_ieee802154_frame_info_t *frame_info) {
+    if (!capturing) {
+        esp_ieee802154_receive_handle_done(frame);
+        return;
+    }
+
+    uint8_t length = frame[0];
+    if (length > MAX_FRAME_SIZE) {
+        length = MAX_FRAME_SIZE;
+    }
+
     // Store frame
     if (frame_count < MAX_FRAMES) {
-        memcpy(frames[frame_count].data, data, length);
+        memcpy(frames[frame_count].data, frame + 1, length);
         frames[frame_count].length = length;
-        frames[frame_count].rssi = rssi;
-        frames[frame_count].timestamp = timestamp;
-        frames[frame_count].channel = CHANNEL;
+        frames[frame_count].rssi = frame_info->rssi;
+        frames[frame_count].timestamp = (uint32_t)frame_info->timestamp;
+        frames[frame_count].channel = frame_info->channel;
         frames[frame_count].valid = true;
-        
+
         // Process frame
-        processFrame(data, length, rssi);
-        
+        processFrame(frame + 1, length, frame_info->rssi);
+
         frame_count++;
     }
+
+    esp_ieee802154_receive_handle_done(frame);
 }
 
 void setup() {
@@ -104,13 +115,10 @@ void setup() {
     Serial.println();
     
     // Initialize IEEE 802.15.4
-    esp_ieee802154_init();
+    esp_ieee802154_enable();
     esp_ieee802154_set_channel(CHANNEL);
     esp_ieee802154_set_promiscuous(true);
-    esp_ieee802154_rx_receive_enable(true);
-    
-    // Register receive callback
-    esp_ieee802154_receive_set_callback(ieee802154_rx_cb);
+    esp_ieee802154_receive();
     
     Serial.printf("IEEE 802.15.4 initialized on channel %d\n", CHANNEL);
     Serial.println();
